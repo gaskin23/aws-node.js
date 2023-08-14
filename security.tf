@@ -135,3 +135,29 @@ resource "aws_security_group" "NAT-sg" {
     Name = "${var.env_prefix}-NAT-sg"
   }
 }
+
+
+resource "aws_security_group" "app-sg" {
+  name        = "app-sg"
+  description = "Allow from webserver"
+  vpc_id      = aws_vpc.Capstone-VPC.id
+
+  ingress {
+    from_port   = 3000
+    to_port     = 3000
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "${var.env_prefix}-app-sg"
+  }
+}

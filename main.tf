@@ -7,14 +7,18 @@ resource "aws_db_subnet_group" "rds_subnet" {
 }
 
 //////////////DB-INSTANCE///////////
-
-resource "aws_db_instance" "aws-capstone-RDS" {
+resource "aws_db_instance" "postgresql" {
   identifier              = var.db_instance_identifier
   allocated_storage       = var.db_allocated_storage
   max_allocated_storage   = var.db_max_allocated_storage
-  engine                  = var.db_engine
-  engine_version          = var.db_engine_version
+  storage_type            = "gp2"
+  engine                  = var.db_engine 
+  engine_version          = var.db_engine_version 
   instance_class          = var.db_instance_class
+  name                    = var.db_name
+  username                = var.db_username
+  password                = var.db_password
+  parameter_group_name    = var.db_parameter_group_name
   skip_final_snapshot     = true
   apply_immediately       = true
   vpc_security_group_ids  = [aws_security_group.RDS-sg.id]
@@ -24,59 +28,17 @@ resource "aws_db_instance" "aws-capstone-RDS" {
   backup_retention_period = var.db_backup_retention_period
   backup_window           = var.db_backup_window
   maintenance_window      = var.db_maintenance_window
-  name                    = var.db_name
-  username                = var.db_username
-  password                = var.db_password
-  parameter_group_name    = var.db_parameter_group_name
 
   tags = {
     Name = "${var.env_prefix}-RDS-instance"
   }
-
 }
 
 ////////////////S3-BUCKET/////////////
 
-resource "aws_s3_bucket" "failover-bucket" {
-  bucket        = var.failover_bucket
-  acl           = var.failover_acl
+resource "aws_s3_bucket" "aws-bucket" {
+  bucket        = var.aws_bucket
   force_destroy = true
-  policy        = file("policy2.json")
-
-  website {
-    index_document = var.blog_index_document
-  }
-}
-
-resource "aws_s3_bucket_object" "object1" {
-  for_each      = fileset("myfiles/", "*")
-  bucket        = aws_s3_bucket.failover-bucket.id
-  key           = each.value
-  source        = "myfiles/${each.value}"
-  etag          = filemd5("myfiles/${each.value}")
-  force_destroy = true
-}
-
-resource "aws_s3_bucket_public_access_block" "failover-public-access" {
-  bucket = var.failover_bucket
-
-  block_public_acls   = false
-  block_public_policy = false
-}
-#////////////////BLOG WEB SİTE'S S3 BUCKET//////////////
-
-resource "aws_s3_bucket" "awscapstonesgaskinblog" {
-  bucket        = var.blog_bucket
-  acl           = var.blog_acl
-  policy        = file("policy.json")
-  force_destroy = true
-}
-
-resource "aws_s3_bucket_public_access_block" "blog-public-access" {
-  bucket = var.blog_bucket
-
-  block_public_acls   = false
-  block_public_policy = false
 }
 
 /////////////NAT-INSTANCE/////////
@@ -147,15 +109,15 @@ resource "aws_iam_policy_attachment" "role-attach" {
   policy_arn = aws_iam_policy.S3-Policy.arn
 }
 
-#/////////////////AMAZON CERTIFICATE MANAGER///////////
+# #/////////////////AMAZON CERTIFICATE MANAGER///////////
 
-data "aws_acm_certificate" "amazon_issued" {
-  domain      = var.acm_domain
-  types       = var.acm_types
-  most_recent = true
-}
+# data "aws_acm_certificate" "amazon_issued" {
+#   domain      = var.acm_domain
+#   types       = var.acm_types
+#   most_recent = true
+# }
 
-#///////////////ELASTIC LOAD BALANCER///////////////
+///ELASTIC LOAD BALANCER/////
 
 resource "aws_lb_target_group" "Capstone-tg" {
   vpc_id           = aws_vpc.Capstone-VPC.id
@@ -193,26 +155,21 @@ resource "aws_lb_listener" "Capstone-listener-80" {
   default_action {
     type             = var.listener_http_type
     target_group_arn = aws_lb_target_group.Capstone-tg.arn
-    redirect {
-      port        = "443"
-      protocol    = "HTTPS"
-      status_code = "HTTP_301"
-    }
   }
 }
 
-resource "aws_lb_listener" "Capstone-listener-443" {
-  load_balancer_arn = aws_lb.Capstone-ELB.arn
-  port              = "443"
-  protocol          = "HTTPS"
-  ssl_policy        = "ELBSecurityPolicy-2016-08"
-  certificate_arn   = data.aws_acm_certificate.amazon_issued.arn
+# resource "aws_lb_listener" "Capstone-listener-443" {
+#   load_balancer_arn = aws_lb.Capstone-ELB.arn
+#   port              = "443"
+#   protocol          = "HTTPS"
+#   ssl_policy        = "ELBSecurityPolicy-2016-08"
+#   certificate_arn   = data.aws_acm_certificate.amazon_issued.arn
 
-  default_action {
-    type             = var.listener_https_type
-    target_group_arn = aws_lb_target_group.Capstone-tg.arn
-  }
-}
+#   default_action {
+#     type             = var.listener_https_type
+#     target_group_arn = aws_lb_target_group.Capstone-tg.arn
+#   }
+# }
 
 #//////////////////AUTO SCALING GROUP///////////////
 
@@ -228,223 +185,141 @@ resource "aws_autoscaling_group" "Capstone-asg" {
   launch_template {
     id      = aws_launch_template.Capstone-LT.id
     version = "$Latest"
+
+    network_interfaces {
+    associate_public_ip_address = true
+  }
+
   }
 }
 
-#///////////////CLOUDFRONT IN FRONT OF ELB//////////////
+/////////cloudfront distrubition/////////
 
-resource "aws_cloudfront_distribution" "Capstone-ELB-cloudfront" {
+resource "aws_cloudfront_distribution" "aws-capstone-elb" {
   origin {
     domain_name = aws_lb.Capstone-ELB.dns_name
-    origin_id   = aws_lb.Capstone-ELB.dns_name
-
-    custom_origin_config {
-      http_port              = 80
-      https_port             = 443
-      origin_protocol_policy = var.cf_origin_protocol_policy
-      origin_ssl_protocols   = var.cf_origin_ssl_protocols
-    }
+    origin_id   = "Capstone-ELB"
   }
 
   enabled = true
-  comment = "${var.env_prefix}-CF-ELB"
-  aliases = var.cf_aliases
 
   default_cache_behavior {
-    compress         = true
-    allowed_methods  = var.cf_allowed_methods
-    cached_methods   = var.cf_cached_methods
-    target_origin_id = aws_lb.Capstone-ELB.dns_name
-
+    target_origin_id = "Capstone-ELB"
+    viewer_protocol_policy = "allow-all"
+    allowed_methods  = ["GET", "HEAD", "OPTIONS"]
+    cached_methods   = ["GET", "HEAD"]
     forwarded_values {
-      query_string            = false
-      headers                 = ["*"]
-      query_string_cache_keys = []
-
+      query_string = false
       cookies {
-        forward = var.cf_forward
+        forward = "none"
       }
-    }
-
-    viewer_protocol_policy = var.cf_viewer_protocol_policy
-    min_ttl                = 0
-    default_ttl            = 3600
-    max_ttl                = 86400
-  }
-
-  ordered_cache_behavior {
-    path_pattern     = var.cf_path_pattern
-    allowed_methods  = var.cf_cached_methods
-    cached_methods   = var.cf_cached_methods
-    target_origin_id = aws_lb.Capstone-ELB.dns_name
-
-
-    forwarded_values {
-      query_string            = false
-      headers                 = ["*"]
-      query_string_cache_keys = []
-
-      cookies {
-        forward = var.cf_forward
-      }
-    }
-
-    min_ttl                = 0
-    default_ttl            = 86400
-    max_ttl                = 31536000
-    compress               = true
-    viewer_protocol_policy = var.cf_viewer_protocol_policy
-  }
-
-
-  price_class = var.cf_price_class
-
-  restrictions {
-    geo_restriction {
-      restriction_type = var.cf_restriction_type
     }
   }
 
   viewer_certificate {
-    acm_certificate_arn      = data.aws_acm_certificate.amazon_issued.arn
-    ssl_support_method       = var.cf_ssl_support_method
-    minimum_protocol_version = var.cf_minimum_protocol_version
-  }
-}
-
-#///////////////////////ROUTE 53//////////////
-
-resource "aws_route53_health_check" "Capstone-health-check" {
-  fqdn              = aws_cloudfront_distribution.Capstone-ELB-cloudfront.domain_name
-  port              = 80
-  type              = var.rt53_type
-  resource_path     = var.rt53_resource_path
-  failure_threshold = var.rt53_failure_threshold
-  request_interval  = var.rt53_request_interval
-
-  tags = {
-    Name = "${var.env_prefix}-route53-hc"
-  }
-}
-#///////////////data hosted zone////////////////
-data "aws_route53_zone" "Capstone-hosted-zone" {
-  name         = var.domain_name
-  private_zone = false
-}
-
-#////////////////records//////////
-
-resource "aws_route53_record" "route53-primary" {
-  zone_id        = data.aws_route53_zone.Capstone-hosted-zone.zone_id
-  name           = "www.${data.aws_route53_zone.Capstone-hosted-zone.name}"
-  type           = var.rt53_record_type
-  set_identifier = var.rt53_set_identifier
-
-  failover_routing_policy {
-    type = var.rt53_failover_type
+    cloudfront_default_certificate = true
   }
 
-  alias {
-    name                   = aws_cloudfront_distribution.Capstone-ELB-cloudfront.domain_name
-    zone_id                = aws_cloudfront_distribution.Capstone-ELB-cloudfront.hosted_zone_id
-    evaluate_target_health = true
+  restrictions {
+    geo_restriction {
+      restriction_type = "none"
+    }
   }
 }
+# resource "aws_cloudfront_distribution" "Capstone-ELB-cloudfront" {
+#   origin {
+#     domain_name = aws_lb.Capstone-ELB.dns_name
+#     origin_id   = aws_lb.Capstone-ELB.dns_name
 
-resource "aws_route53_record" "route53-secondary" {
-  zone_id        = data.aws_route53_zone.Capstone-hosted-zone.zone_id
-  name           = var.domain_name
-  type           = var.rt53_record_type
-  set_identifier = var.rt53_failover_type
+#   }
 
-  failover_routing_policy {
-    type = var.rt53_failover_secondary_type
-  }
-  alias {
-    name                   = aws_s3_bucket.failover-bucket.website_domain
-    zone_id                = aws_s3_bucket.failover-bucket.hosted_zone_id
-    evaluate_target_health = false
-  }
-}
+#   enabled = true
+#   comment = "${var.env_prefix}-CF-ELB"
 
+#   default_cache_behavior {
+#     compress         = true
+#     allowed_methods  = var.cf_allowed_methods
+#     cached_methods   = var.cf_cached_methods
+#     target_origin_id = aws_lb.Capstone-ELB.dns_name
+#     viewer_protocol_policy = "allow-all" 
+#     min_ttl                = 0
+#     default_ttl            = 3600
+#     max_ttl                = 86400
 
-#////////////////////DYNAMODB TABLE////////////////
+#     forwarded_values {
+#       query_string            = false
+#       headers                 = ["*"]
+#       query_string_cache_keys = []
 
-resource "aws_dynamodb_table" "Capstone-Dynamodb" {
-  name           = "${var.env_prefix}-Dynamodb"
-  billing_mode   = var.dy_billing_mode
-  read_capacity  = 20
-  write_capacity = 20
-  hash_key       = var.dy_hash_key
+#       cookies {
+#         forward = var.cf_forward
+#       }
+#     }
+#   }
 
-  attribute {
-    name = var.dy_hash_key
-    type = var.dy_type
-  }
-  tags = {
-    Name = "${var.env_prefix}-dynamodb"
-  }
-}
+#   price_class = var.cf_price_class
+#   viewer_certificate {
+#     cloudfront_default_certificate = true
+#   }
 
-#////////////////////LAMBDA FUNCTION/////////////////
+#   restrictions {
+#     geo_restriction {
+#       restriction_type = var.cf_restriction_type
+#     }
+#   }
+# }
 
-resource "aws_iam_role" "Capstone_role_lambda" {
-  name               = "${var.env_prefix}-lambda"
-  assume_role_policy = file("lambdapolicy.json")
-}
+////////ROUTE53 DNS ////////////////////
 
-resource "aws_iam_role_policy_attachment" "role-policy-attachment" {
-  role       = aws_iam_role.Capstone_role_lambda.name
-  count      = length(var.lambda_policy_arn)
-  policy_arn = var.lambda_policy_arn[count.index]
-}
+# resource "aws_route53_health_check" "Capstone-health-check" {
+#   fqdn              = aws_cloudfront_distribution.Capstone-ELB-cloudfront.domain_name
+#   port              = 80
+#   type              = var.rt53_type
+#   resource_path     = var.rt53_resource_path
+#   failure_threshold = var.rt53_failure_threshold
+#   request_interval  = var.rt53_request_interval
 
-locals {
-  lambda_zip_location = "outputs/lambda.zip"
-}
+#   tags = {
+#     Name = "${var.env_prefix}-route53-hc"
+#   }
+# }
+# #///////////////data hosted zone////////////////
+# data "aws_route53_zone" "Capstone-hosted-zone" {
+#   name         = var.domain_name
+#   private_zone = false
+# }
 
-data "archive_file" "Capstone-lambda" {
-  type        = var.archive_type
-  source_file = var.lambda_source_file
-  output_path = local.lambda_zip_location
-}
+# #////////////////records//////////
 
-resource "aws_lambda_function" "Capstone-lambda" {
-  filename      = var.lambda_filename
-  function_name = var.lambda_function_name
-  role          = aws_iam_role.Capstone_role_lambda.arn
-  handler       = var.handler
-  #source_code_hash = filebase64sha256("lambda.zip")
+# resource "aws_route53_record" "route53-primary" {
+#   zone_id        = data.aws_route53_zone.Capstone-hosted-zone.zone_id
+#   name           = "www.${data.aws_route53_zone.Capstone-hosted-zone.name}"
+#   type           = var.rt53_record_type
+#   set_identifier = var.rt53_set_identifier
 
-  runtime = var.runtime
+#   aws_routing_policy {
+#     type = var.rt53_aws_type
+#   }
 
-  vpc_config {
-    subnet_ids = [
-      "${aws_subnet.Private1A.id}",
-      "${aws_subnet.Private1B.id}",
-      "${aws_subnet.Public1A.id}",
-      "${aws_subnet.Public1B.id}",
-    ]
-    security_group_ids = ["${aws_security_group.Lambda_sg.id}"]
-  }
-}
+#   alias {
+#     name                   = aws_cloudfront_distribution.Capstone-ELB-cloudfront.domain_name
+#     zone_id                = aws_cloudfront_distribution.Capstone-ELB-cloudfront.hosted_zone_id
+#     evaluate_target_health = true
+#   }
+# }
 
-#////////////////////LAMBDA S3 TRIGGER///////////////
+# resource "aws_route53_record" "route53-secondary" {
+#   zone_id        = data.aws_route53_zone.Capstone-hosted-zone.zone_id
+#   name           = var.domain_name
+#   type           = var.rt53_record_type
+#   set_identifier = var.rt53_aws_type
 
-resource "aws_s3_bucket_notification" "Capstone-lambda-s3-trigger" {
-  bucket = aws_s3_bucket.awscapstonesgaskinblog.id
-
-  lambda_function {
-    lambda_function_arn = aws_lambda_function.Capstone-lambda.arn
-    events              = var.s3_trigger_events
-    filter_prefix       = var.s3_trigger_filter_prefix
-  }
-}
-
-resource "aws_lambda_permission" "capstone-lambda-permission" {
-  statement_id  = var.lambda_trigger_statement_id
-  action        = var.lambda_trigger_action
-  function_name = aws_lambda_function.Capstone-lambda.function_name
-  principal     = var.lambda_trigger_principal
-  source_arn    = "arn:aws:s3:::${aws_s3_bucket.awscapstonesgaskinblog.id}"
-}
+#   aws_routing_policy {
+#     type = var.rt53_aws_secondary_type
+#   }
+#   alias {
+#     name                   = aws_s3_bucket.aws-bucket.website_domain
+#     zone_id                = aws_s3_bucket.aws-bucket.hosted_zone_id
+#     evaluate_target_health = false
+#   }
+# }

@@ -186,9 +186,7 @@ resource "aws_autoscaling_group" "Capstone-asg" {
     id      = aws_launch_template.Capstone-LT.id
     version = "$Latest"
 
-    network_interfaces {
-    associate_public_ip_address = true
-  }
+
 
   }
 }
